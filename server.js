@@ -8,15 +8,14 @@ const userRoutes = require('./routes/users');
 const listingRoutes = require('./routes/listings');
 
 // Import database connection
-const { connectDB } = require('./database/mongodb');
+const { testConnection } = require('./database/postgres');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Connect to MongoDB on startup
-connectDB().catch(err => {
-  console.error('Failed to connect to MongoDB:', err);
-  process.exit(1);
+// Connect to PostgreSQL on startup
+testConnection().catch(err => {
+  console.error('Failed to connect to PostgreSQL:', err);
 });
 
 // Middleware
@@ -43,7 +42,7 @@ app.get('/', (req, res) => {
   res.json({
     message: 'Khaane Me Kya Hai API Server',
     version: '1.0.0',
-    database: 'MongoDB Atlas',
+    database: 'Supabase PostgreSQL',
     endpoints: {
       test: '/api/test/test-db',
       users: '/api/users',
