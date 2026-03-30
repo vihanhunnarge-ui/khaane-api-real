@@ -1,5 +1,5 @@
 const express = require('express');
-const { testConnection } = require('../database/mongodb');
+const { testConnection } = require('../database/postgres');
 
 const router = express.Router();
 
@@ -11,7 +11,7 @@ router.get('/test-db', async (req, res) => {
     if (isConnected) {
       res.json({
         success: true,
-        message: 'MongoDB connection successful',
+        message: 'PostgreSQL connection successful',
         data: {
           connected: true,
           timestamp: new Date().toISOString()

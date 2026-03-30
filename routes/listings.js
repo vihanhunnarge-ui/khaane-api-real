@@ -1,17 +1,11 @@
 const express = require('express');
-const { getDB } = require('../database/mongodb');
-const { ObjectId } = require('mongodb');
+const { executeQuery } = require('../database/postgres');
 
 const router = express.Router();
-
-const COLLECTION = 'food_listings';
 
 // POST /api/listings - Create new food listing
 router.post('/', async (req, res) => {
   try {
-    const db = getDB();
-    const collection = db.collection(COLLECTION);
-    
     const {
       sellerId, sellerName, sellerApartment, name, category,
       description, price, quantity, prepTime, image, dietaryType,
@@ -25,24 +19,28 @@ router.post('/', async (req, res) => {
       });
     }
 
-    const newListing = {
-      sellerId, sellerName: sellerName || '', sellerApartment: sellerApartment || '',
-      name, category: category || 'lunch', description: description || '',
-      price: parseFloat(price), quantity: parseInt(quantity), prepTime: prepTime || 30,
-      rating: 0, image: image || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c',
-      dietaryType: dietaryType || 'veg',
-      orderTimeStart: orderTimeStart || '', orderTimeEnd: orderTimeEnd || '',
-      deliveryTimeStart: deliveryTimeStart || '', deliveryTimeEnd: deliveryTimeEnd || '',
-      allergens: allergens || {}, isAvailable: true,
-      createdAt: new Date(), updatedAt: new Date()
-    };
-
-    const result = await collection.insertOne(newListing);
+    const result = await executeQuery(
+      `INSERT INTO food_listings (
+        seller_id, seller_name, seller_apartment, name, category,
+        description, price, quantity, prep_time, image, dietary_type,
+        order_time_start, order_time_end, delivery_time_start, delivery_time_end,
+        allergens, is_available, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW(), NOW())
+      RETURNING *`,
+      [
+        sellerId, sellerName || '', sellerApartment || '', name, category || 'lunch',
+        description || '', parseFloat(price), parseInt(quantity), prepTime || 30,
+        image || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c',
+        dietaryType || 'veg', orderTimeStart || '', orderTimeEnd || '',
+        deliveryTimeStart || '', deliveryTimeEnd || '',
+        JSON.stringify(allergens || {}), true
+      ]
+    );
 
     res.status(201).json({
       success: true,
       message: 'Food listing created successfully',
-      data: { id: result.insertedId, ...newListing }
+      data: result[0]
     });
 
   } catch (error) {
@@ -54,17 +52,34 @@ router.post('/', async (req, res) => {
 // GET /api/listings - Get all listings
 router.get('/', async (req, res) => {
   try {
-    const db = getDB();
-    const collection = db.collection(COLLECTION);
-    
     const { apartment, category, sellerId, available } = req.query;
-    const filter = {};
-    if (apartment) filter.sellerApartment = apartment;
-    if (category) filter.category = category;
-    if (sellerId) filter.sellerId = sellerId;
-    if (available === 'true') filter.isAvailable = true;
     
-    const listings = await collection.find(filter).sort({ createdAt: -1 }).toArray();
+    let query = 'SELECT * FROM food_listings WHERE 1=1';
+    let params = [];
+    let paramCount = 0;
+    
+    if (apartment) {
+      paramCount++;
+      query += ` AND seller_apartment = $${paramCount}`;
+      params.push(apartment);
+    }
+    if (category) {
+      paramCount++;
+      query += ` AND category = $${paramCount}`;
+      params.push(category);
+    }
+    if (sellerId) {
+      paramCount++;
+      query += ` AND seller_id = $${paramCount}`;
+      params.push(sellerId);
+    }
+    if (available === 'true') {
+      query += ' AND is_available = true';
+    }
+    
+    query += ' ORDER BY created_at DESC';
+    
+    const listings = await executeQuery(query, params);
     res.json({ success: true, count: listings.length, data: listings });
 
   } catch (error) {
@@ -76,14 +91,15 @@ router.get('/', async (req, res) => {
 // GET /api/listings/:id - Get single listing
 router.get('/:id', async (req, res) => {
   try {
-    const db = getDB();
-    const collection = db.collection(COLLECTION);
-    const listing = await collection.findOne({ _id: new ObjectId(req.params.id) });
+    const listings = await executeQuery(
+      'SELECT * FROM food_listings WHERE id = $1',
+      [req.params.id]
+    );
 
-    if (!listing) {
+    if (listings.length === 0) {
       return res.status(404).json({ success: false, message: 'Listing not found' });
     }
-    res.json({ success: true, data: listing });
+    res.json({ success: true, data: listings[0] });
 
   } catch (error) {
     console.error('Get listing error:', error);
@@ -94,20 +110,31 @@ router.get('/:id', async (req, res) => {
 // PUT /api/listings/:id - Update listing
 router.put('/:id', async (req, res) => {
   try {
-    const db = getDB();
-    const collection = db.collection(COLLECTION);
-    const updates = { ...req.body, updatedAt: new Date() };
-    delete updates._id; delete updates.createdAt;
+    const updates = { ...req.body, updated_at: new Date() };
+    delete updates.id; delete updates.created_at;
     
-    const result = await collection.updateOne(
-      { _id: new ObjectId(req.params.id) },
-      { $set: updates }
+    const fields = [];
+    const values = [];
+    let paramCount = 0;
+    
+    for (const [key, value] of Object.entries(updates)) {
+      paramCount++;
+      fields.push(`${key} = $${paramCount}`);
+      values.push(value);
+    }
+    
+    paramCount++;
+    values.push(req.params.id);
+    
+    const result = await executeQuery(
+      `UPDATE food_listings SET ${fields.join(', ')} WHERE id = $${paramCount} RETURNING *`,
+      values
     );
 
-    if (result.matchedCount === 0) {
+    if (result.length === 0) {
       return res.status(404).json({ success: false, message: 'Listing not found' });
     }
-    res.json({ success: true, message: 'Listing updated successfully' });
+    res.json({ success: true, message: 'Listing updated successfully', data: result[0] });
 
   } catch (error) {
     console.error('Update listing error:', error);
@@ -118,11 +145,12 @@ router.put('/:id', async (req, res) => {
 // DELETE /api/listings/:id - Delete listing
 router.delete('/:id', async (req, res) => {
   try {
-    const db = getDB();
-    const collection = db.collection(COLLECTION);
-    const result = await collection.deleteOne({ _id: new ObjectId(req.params.id) });
+    const result = await executeQuery(
+      'DELETE FROM food_listings WHERE id = $1 RETURNING *',
+      [req.params.id]
+    );
 
-    if (result.deletedCount === 0) {
+    if (result.length === 0) {
       return res.status(404).json({ success: false, message: 'Listing not found' });
     }
     res.json({ success: true, message: 'Listing deleted successfully' });

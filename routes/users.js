@@ -1,16 +1,12 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const { getDB } = require('../database/mongodb');
+const { executeQuery } = require('../database/postgres');
 
 const router = express.Router();
-const USERS_COLLECTION = 'users';
 
 // POST /signup - Create a new user
 router.post('/signup', async (req, res) => {
   try {
-    const db = getDB();
-    const collection = db.collection(USERS_COLLECTION);
-    
     const { name, email, phone, password, apartment_name, flat_number, wing_or_tower } = req.body;
 
     if (!name || !email || !phone || !password) {
@@ -21,11 +17,12 @@ router.post('/signup', async (req, res) => {
     }
 
     // Check if user already exists
-    const existingUser = await collection.findOne({
-      $or: [{ phone }, { email }]
-    });
+    const existingUsers = await executeQuery(
+      'SELECT * FROM users WHERE phone = $1 OR email = $2',
+      [phone, email]
+    );
 
-    if (existingUser) {
+    if (existingUsers.length > 0) {
       return res.status(409).json({
         success: false,
         message: 'User with this phone or email already exists'
@@ -36,27 +33,15 @@ router.post('/signup', async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, 10);
 
     // Insert new user
-    const newUser = {
-      name,
-      email,
-      phone,
-      password: hashedPassword,
-      apartment_name: apartment_name || null,
-      flat_number: flat_number || null,
-      wing_or_tower: wing_or_tower || null,
-      created_at: new Date()
-    };
-
-    const result = await collection.insertOne(newUser);
-
-    // Return user without password
-    const { password: _, ...userWithoutPassword } = newUser;
-    userWithoutPassword.id = result.insertedId;
+    const result = await executeQuery(
+      'INSERT INTO users (name, email, phone, password, apartment_name, flat_number, wing_or_tower, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW()) RETURNING id, name, email, phone, apartment_name, flat_number, wing_or_tower, created_at',
+      [name, email, phone, hashedPassword, apartment_name || null, flat_number || null, wing_or_tower || null]
+    );
 
     res.status(201).json({
       success: true,
       message: 'User created successfully',
-      data: userWithoutPassword
+      data: result[0]
     });
 
   } catch (error) {
@@ -72,9 +57,6 @@ router.post('/signup', async (req, res) => {
 // POST /login - User login
 router.post('/login', async (req, res) => {
   try {
-    const db = getDB();
-    const collection = db.collection(USERS_COLLECTION);
-    
     const { email, password } = req.body;
 
     if (!email || !password) {
@@ -85,14 +67,19 @@ router.post('/login', async (req, res) => {
     }
 
     // Find user by email
-    const user = await collection.findOne({ email });
+    const users = await executeQuery(
+      'SELECT * FROM users WHERE email = $1',
+      [email]
+    );
 
-    if (!user) {
+    if (users.length === 0) {
       return res.status(401).json({
         success: false,
         message: 'Invalid email or password'
       });
     }
+
+    const user = users[0];
 
     // Compare password
     const isPasswordValid = await bcrypt.compare(password, user.password);
@@ -126,12 +113,9 @@ router.post('/login', async (req, res) => {
 // GET /users - Get all users (for testing)
 router.get('/users', async (req, res) => {
   try {
-    const db = getDB();
-    const collection = db.collection(USERS_COLLECTION);
-    
-    const users = await collection
-      .find({}, { projection: { password: 0 } })
-      .toArray();
+    const users = await executeQuery(
+      'SELECT id, name, email, phone, apartment_name, flat_number, wing_or_tower, created_at FROM users ORDER BY created_at DESC'
+    );
 
     res.json({
       success: true,
@@ -152,25 +136,23 @@ router.get('/users', async (req, res) => {
 // GET /apartments - Get apartment names for autocomplete
 router.get('/apartments', async (req, res) => {
   try {
-    const db = getDB();
-    const collection = db.collection(USERS_COLLECTION);
-    
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
     
     const { search } = req.query;
     
-    const filter = { apartment_name: { $ne: null } };
+    let query = 'SELECT DISTINCT apartment_name FROM users WHERE apartment_name IS NOT NULL';
+    let params = [];
+    
     if (search) {
-      filter.apartment_name = { $regex: search, $options: 'i' };
+      query += ' AND apartment_name ILIKE $1';
+      params.push(`%${search}%`);
     }
     
-    const apartments = await collection
-      .distinct('apartment_name', filter);
+    query += ' LIMIT 10';
     
-    const result = apartments
-      .filter(a => a)
-      .slice(0, 10)
-      .map(name => ({ name, address: '' }));
+    const apartments = await executeQuery(query, params);
+    
+    const result = apartments.map(a => ({ name: a.apartment_name, address: '' }));
 
     res.json({
       success: true,
