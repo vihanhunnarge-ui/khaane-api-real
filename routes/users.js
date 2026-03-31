@@ -133,30 +133,35 @@ router.get('/users', async (req, res) => {
   }
 });
 
-// GET /apartments - Get apartment names for autocomplete
+// GET /apartments - Get apartments from apartments table (for autocomplete)
 router.get('/apartments', async (req, res) => {
   try {
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
     
     const { search } = req.query;
     
-    let query = 'SELECT DISTINCT apartment_name FROM users WHERE apartment_name IS NOT NULL';
+    // Query from the apartments table instead of users
+    let query = 'SELECT name, address, city FROM apartments WHERE 1=1';
     let params = [];
     
     if (search) {
-      query += ' AND apartment_name ILIKE $1';
+      query += ' AND (name ILIKE $1 OR address ILIKE $1)';
       params.push(`%${search}%`);
     }
     
-    query += ' LIMIT 10';
+    query += ' ORDER BY name ASC LIMIT 20';
     
     const apartments = await executeQuery(query, params);
     
-    const result = apartments.map(a => ({ name: a.apartment_name, address: '' }));
+    const result = apartments.map(a => ({ 
+      name: a.name, 
+      address: `${a.address}, ${a.city}` 
+    }));
 
     res.json({
       success: true,
       message: 'Apartments retrieved successfully',
+      count: result.length,
       data: result
     });
 

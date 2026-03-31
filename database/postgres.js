@@ -1,26 +1,32 @@
 const { Pool } = require('pg');
 require('dotenv').config();
 
+// Parse the connection string to add IPv4 preference
+const connectionString = process.env.DATABASE_URL;
+
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: connectionString,
   ssl: {
     rejectUnauthorized: false
-  },
-  family: 4
+  }
 });
 
-// Test connection
-async function testConnection() {
-  try {
-    const client = await pool.connect();
-    const result = await client.query('SELECT NOW()');
-    client.release();
-    console.log('✅ PostgreSQL connected successfully');
-    return true;
-  } catch (error) {
-    console.error('❌ PostgreSQL connection failed:', error.message);
-    return false;
+// Test connection with retry
+async function testConnection(retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const client = await pool.connect();
+      const result = await client.query('SELECT NOW()');
+      client.release();
+      console.log('✅ PostgreSQL connected successfully');
+      return true;
+    } catch (error) {
+      console.error(`❌ PostgreSQL connection failed (attempt ${i + 1}):`, error.message);
+      if (i === retries - 1) return false;
+      await new Promise(r => setTimeout(r, 1000));
+    }
   }
+  return false;
 }
 
 // Execute query
