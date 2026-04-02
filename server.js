@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 require('dotenv').config();
 
 // Import routes
@@ -20,7 +21,7 @@ testConnection().catch(err => {
 
 // Middleware
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002', 'https://khaanemekyahai.netlify.app'],
+  origin: ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002', 'http://localhost:3003', 'https://khaanemekyahai.netlify.app'],
   credentials: true
 }));
 app.use(express.json({ limit: '10mb' }));
@@ -32,12 +33,12 @@ app.use((req, res, next) => {
   next();
 });
 
-// Routes
+// API Routes - MUST come before static files
 app.use('/api/test', testRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/listings', listingRoutes);
 
-// Root endpoint
+// API Root endpoint
 app.get('/', (req, res) => {
   res.json({
     message: 'Khaane Me Kya Hai API Server',
@@ -51,12 +52,15 @@ app.get('/', (req, res) => {
   });
 });
 
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    message: 'Endpoint not found'
-  });
+// Serve static files from React build folder
+app.use(express.static(path.join(__dirname, '../build')));
+
+// Handle React routing, return all requests to React app (except API)
+app.get(/.*/, (req, res, next) => {
+  if (req.path.startsWith('/api/')) {
+    return next();
+  }
+  res.sendFile(path.join(__dirname, '../build', 'index.html'));
 });
 
 // Global error handler
